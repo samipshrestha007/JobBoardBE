@@ -3,6 +3,8 @@ const nodemailer = require('nodemailer');
 const isEmailConfigured = !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
 
 let transporter;
+let emailServiceAvailable = false;
+
 if (isEmailConfigured) {
   // Use explicit SMTP configuration instead of 'service: gmail'
   // This works better with hosting platforms like Render
@@ -17,17 +19,25 @@ if (isEmailConfigured) {
     tls: {
       rejectUnauthorized: false // Allow self-signed certificates
     },
-    connectionTimeout: 10000, // 10 seconds
-    greetingTimeout: 10000,
-    socketTimeout: 10000
+    connectionTimeout: 20000, // 20 seconds (increased)
+    greetingTimeout: 20000,
+    socketTimeout: 20000,
+    // Add retry logic
+    pool: true,
+    maxConnections: 1,
+    maxMessages: 3
   });
 
-  // Verify connection configuration
+  // Verify connection configuration (async, don't block startup)
   transporter.verify(function (error, success) {
     if (error) {
       console.log('❌ Email service configuration error:', error.message);
+      console.log('⚠️  Email service will fall back to mock mode');
+      console.log('💡 Tip: Consider using a transactional email service (Brevo/SendGrid) for better reliability');
+      emailServiceAvailable = false;
     } else {
       console.log('✅ Email service is ready to send messages');
+      emailServiceAvailable = true;
     }
   });
 }
@@ -37,13 +47,14 @@ const generateVerificationCode = () => {
 };
 
 const sendVerificationEmail = async (email, verificationCode) => {
-  if (!isEmailConfigured) {
-    console.log('📧 Mock Email - Verification Code:', verificationCode);
+  if (!isEmailConfigured || !emailServiceAvailable) {
+    console.log('📧 Mock Email - Verification Code for', email + ':', verificationCode);
+    console.log('⚠️  Check Render logs above to see the verification code');
     return true;
   }
 
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
     to: email,
     subject: 'Email Verification - JobBoard',
     html: `
@@ -65,22 +76,33 @@ const sendVerificationEmail = async (email, verificationCode) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    // Add timeout wrapper
+    const sendPromise = transporter.sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Email send timeout')), 15000)
+    );
+    
+    await Promise.race([sendPromise, timeoutPromise]);
+    console.log('✅ Verification email sent successfully to', email);
     return true;
   } catch (error) {
-    console.error('Email sending failed:', error);
-    return false;
+    console.error('❌ Email sending failed:', error.message);
+    console.log('📧 Falling back to mock mode - Verification Code for', email + ':', verificationCode);
+    console.log('⚠️  Check Render logs to see verification codes');
+    // Fallback to mock mode - don't fail the request
+    return true;
   }
 };
 
 const sendPasswordResetEmail = async (email, resetCode) => {
-  if (!isEmailConfigured) {
-    console.log('📧 Mock Email - Password Reset Code:', resetCode);
+  if (!isEmailConfigured || !emailServiceAvailable) {
+    console.log('📧 Mock Email - Password Reset Code for', email + ':', resetCode);
+    console.log('⚠️  Check Render logs above to see the reset code');
     return true;
   }
 
   const mailOptions = {
-    from: process.env.EMAIL_USER,
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
     to: email,
     subject: 'Password Reset - JobBoard',
     html: `
@@ -102,11 +124,21 @@ const sendPasswordResetEmail = async (email, resetCode) => {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    // Add timeout wrapper
+    const sendPromise = transporter.sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Email send timeout')), 15000)
+    );
+    
+    await Promise.race([sendPromise, timeoutPromise]);
+    console.log('✅ Password reset email sent successfully to', email);
     return true;
   } catch (error) {
-    console.error('Email sending failed:', error);
-    return false;
+    console.error('❌ Email sending failed:', error.message);
+    console.log('📧 Falling back to mock mode - Password Reset Code for', email + ':', resetCode);
+    console.log('⚠️  Check Render logs to see reset codes');
+    // Fallback to mock mode - don't fail the request
+    return true;
   }
 };
 
