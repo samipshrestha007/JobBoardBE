@@ -12,7 +12,18 @@ const notificationRoutes = require('./routes/notificationRoutes');
 connectDB();
 
 const app = express();
-app.use(cors());
+
+// CORS configuration
+// In production, use CLIENT_URL environment variable
+// In development, allow all origins for easier testing
+const corsOptions = {
+  origin: process.env.CLIENT_URL || true, // Use CLIENT_URL in production, allow all in development
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // mount the routers
